@@ -1,62 +1,80 @@
-const dotenv = require('dotenv');
+const dotenv = require("dotenv");
 dotenv.config();
-const express = require('express');
-const path = require('path');
-const multer = require('multer');
-const mysql = require('mysql2');
-// Replace your old multer line with this:
-const storage = multer.memoryStorage();
+const express = require("express");
+const path = require("path");
+const multer = require("multer");
+const mysql = require("mysql2");
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, "public/images"));
+  },
+  filename: function (req, file, cb) {
+    // Generates a unique filename
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname),
+    );
+  },
+});
 const upload = multer({ storage: storage });
+
 const app = express();
 
-const bcrypt = require('bcrypt');
+const bcrypt = require("bcrypt");
 const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS) || 10;
 const salt = bcrypt.genSaltSync(saltRounds);
-const session = require('express-session');
-const MySQLStore = require('express-mysql-session')(session);
 
 const dbConn = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 18330,
+  port: process.env.DB_PORT || 3306,
+  decimalNumbers: true, // Ensure DECIMAL types are returned as numbers
   ssl: {
-    rejectUnauthorized: false
+    rejectUnauthorized: false,
   },
   waitForConnections: true,
-  queueLimit: 0
+  queueLimit: 0,
 });
 
-const sessionStore = new MySQLStore({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 18330
+dbConn.getConnection((err, connection) => {
+  if (err) {
+    console.error("Database connection failed:", err);
+  } else {
+    console.log("Database connected!");
+    connection.release();
+  }
 });
 
-app.use(session({ 
-    key: 'cakencrumbs_session',
+const session = require("express-session");
+const MySQLStore = require("express-mysql-session")(session);
+
+const sessionStore = new MySQLStore({}, dbConn);
+
+app.use(
+  session({
+    key: "cakencrumbs_session",
     secret: process.env.SESSION_SECRET,
-    store: sessionStore, // sessions now stay in the DB!
+    store: sessionStore, // sessions stay in the DB!
     resave: false,
     saveUninitialized: false,
-    cookie: { 
-      secure: process.env.NODE_ENV === 'production',
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 24 // 1 day
-      }
-}));
+      maxAge: 1000 * 60 * 60 * 24, // 1 day
+    },
+  }),
+);
 
 //middleware
-app.use(express.static(path.join(__dirname, 'public'))); // to static files from public folder
+app.use(express.static(path.join(__dirname, "public"))); // to static files from public folder
 app.use(express.urlencoded({ extended: true })); //to parse form data
 app.use(express.json()); //to parse json data
 
-
 //index route
-app.get('/', (req, res) => {
+app.get("/", (req, res) => {
   const sql = `
     SELECT * FROM products
     WHERE is_active = 1
@@ -67,21 +85,20 @@ app.get('/', (req, res) => {
   dbConn.query(sql, (err, results) => {
     if (err) {
       console.error("Error fetching featured products:", err);
-      return res.render('index.ejs', { products: [] });
+      return res.render("index.ejs", { products: [] });
     }
 
-    res.render('index.ejs', { products: results });
+    res.render("index.ejs", { products: results });
   });
 });
 
-
-app.get('/order', (req, res) => {
-    res.render('order.ejs');
+app.get("/order", (req, res) => {
+  res.render("order.ejs");
 });
 
 //Authentication routes
-app.get('/register', (req, res) => {
-    res.render('register.ejs');
+app.get("/register", (req, res) => {
+  res.render("register.ejs");
 });
 
 app.get("/login", (req, res) => {
@@ -98,7 +115,7 @@ app.get("/login", (req, res) => {
   res.render("login.ejs");
 });
 
-app.post('/checkout', (req, res) => {
+app.post("/checkout", (req, res) => {
   const {
     customerName,
     customerEmail,
@@ -108,27 +125,41 @@ app.post('/checkout', (req, res) => {
     orderType,
     date,
     time,
-    items
+    items,
   } = req.body;
 
-  const nameParts = customerName.trim().split(' ');
+  const nameParts = customerName.trim().split(" ");
   const first_name = nameParts[0];
-  const last_name = nameParts.slice(1).join(' ') || '';
+  const last_name = nameParts.slice(1).join(" ") || "";
   const email = customerEmail;
   const phone = customerPhone;
   const instructions = specialInstructions;
   const password = customerPassword;
 
-  if (!first_name || !last_name || !email || !phone || !orderType || !date || !time || !items || items.length === 0) {
-    return res.status(400).json({ message: 'Missing required fields or empty cart.' });
+  if (
+    !first_name ||
+    !last_name ||
+    !email ||
+    !phone ||
+    !orderType ||
+    !date ||
+    !time ||
+    !items ||
+    items.length === 0
+  ) {
+    return res
+      .status(400)
+      .json({ message: "Missing required fields or empty cart." });
   }
 
   // Check if customer already exists
-  const findCustomer = 'SELECT id FROM customers WHERE email = ?';
+  const findCustomer = "SELECT id FROM customers WHERE email = ?";
   dbConn.query(findCustomer, [email], (err, results) => {
     if (err) {
-      console.error('Error checking customer:', err);
-      return res.status(500).json({ message: 'Database error while checking customer.' });
+      console.error("Error checking customer:", err);
+      return res
+        .status(500)
+        .json({ message: "Database error while checking customer." });
     }
 
     if (results.length > 0) {
@@ -138,7 +169,7 @@ app.post('/checkout', (req, res) => {
     } else {
       // New customer → create record
       let hashedPassword = null;
-      if (password && password.trim() !== '') {
+      if (password && password.trim() !== "") {
         hashedPassword = bcrypt.hashSync(password, salt);
       }
 
@@ -146,21 +177,30 @@ app.post('/checkout', (req, res) => {
         INSERT INTO customers (first_name, last_name, email, phone)
         VALUES (?, ?, ?, ?)
       `;
-      dbConn.query(insertCustomer, [first_name, last_name, email, phone], (err, result) => {
-        if (err) {
-          console.error('Error creating customer:', err);
-          return res.status(500).json({ message: 'Error creating new customer.' });
-        }
+      dbConn.query(
+        insertCustomer,
+        [first_name, last_name, email, phone],
+        (err, result) => {
+          if (err) {
+            console.error("Error creating customer:", err);
+            return res
+              .status(500)
+              .json({ message: "Error creating new customer." });
+          }
 
-        const customerId = result.insertId;
-        saveOrder(customerId);
-      });
+          const customerId = result.insertId;
+          saveOrder(customerId);
+        },
+      );
     }
   });
 
   // Save the main order
   function saveOrder(customerId) {
-    const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const subtotal = items.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0,
+    );
     const tax = subtotal * 0.08;
     const deliveryFee = 0;
     const total = subtotal + tax;
@@ -170,16 +210,16 @@ app.post('/checkout', (req, res) => {
     const orderNumber = `ORD-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
     const insertOrder = `
-      INSERT INTO orders (order_number, customer_id, special_instructions, order_type, order_date, order_time, pickup_date, pickup_time, total_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO orders (order_number, customer_id, special_instructions, pickup_date, pickup_time, total_price)
+      VALUES (?, ?, ?, ?, ?, ?)
     `;
     dbConn.query(
       insertOrder,
-      [orderNumber, customerId, instructions, "pickup", date, time, date, time, total],
+      [orderNumber, customerId, instructions, date, time, total],
       (err, result) => {
         if (err) {
-          console.error('Error saving order:', err);
-          return res.status(500).json({ message: 'Error saving order.' });
+          console.error("Error saving order:", err);
+          return res.status(500).json({ message: "Error saving order." });
         }
 
         const orderId = result.insertId;
@@ -187,8 +227,8 @@ app.post('/checkout', (req, res) => {
         // Save order items
         saveOrderItems(orderId, items);
 
-        return res.json({ message: 'Order placed successfully!' });
-      }
+        return res.json({ message: "Order placed successfully!" });
+      },
     );
   }
 
@@ -197,27 +237,30 @@ app.post('/checkout', (req, res) => {
     if (!items || items.length === 0) return;
 
     const insertItems = `
-      INSERT INTO order_items (order_id, product_id, quantity, unit_price, total )
+      INSERT INTO order_items (order_id, product_id, quantity, unit_price)
       VALUES ?
     `;
 
-    const values = items.map(item => [orderId, item.id, item.quantity, item.price, item.price * item.quantity]);
+    const values = items.map((item) => [
+      orderId,
+      item.id,
+      item.quantity,
+      item.price,
+    ]);
 
     dbConn.query(insertItems, [values], (err) => {
-      if (err) console.error('Error saving order items:', err);
+      if (err) console.error("Error saving order items:", err);
     });
   }
 });
 
-
-
 // Admin Login Page
-app.get('/admin/login', (req, res) => {
-  res.render('admin-login.ejs'); 
+app.get("/admin/login", (req, res) => {
+  res.render("admin-login.ejs");
 });
 
 // Admin Login
-app.post('/admin/login', (req, res) => {
+app.post("/admin/login", (req, res) => {
   const { email, password } = req.body;
 
   // Simple authentication example (replace with DB check later)
@@ -226,26 +269,30 @@ app.post('/admin/login', (req, res) => {
 
   if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
     // You could use session or JWT later for actual login
-    res.redirect('/admin/dashboard');
+    res.redirect("/admin/dashboard");
   } else {
-    res.render('admin-login.ejs', { error: 'Invalid credentials. Please try again.' });
+    res.render("admin-login.ejs", {
+      error: "Invalid credentials. Please try again.",
+    });
   }
 });
 
 // Admin Dashboard Page
-app.get('/admin/dashboard', (req, res) => {
+app.get("/admin/dashboard", (req, res) => {
   // get total orders count
-  const ordersCountQuery = 'SELECT COUNT(*) as totalOrders FROM orders';
-  
+  const ordersCountQuery = "SELECT COUNT(*) as totalOrders FROM orders";
+
   // get total sales
-  const totalSalesQuery = 'SELECT SUM(total_price) as totalSales FROM orders WHERE status != "cancelled"';
+  const totalSalesQuery =
+    'SELECT SUM(total_price) as totalSales FROM orders WHERE status != "cancelled"';
 
   // get unique customers count
-  const customersCountQuery = 'SELECT COUNT(*) as totalCustomers FROM customers';
+  const customersCountQuery =
+    "SELECT COUNT(*) as totalCustomers FROM customers";
 
   // get products count
-  const productsCountQuery = 'SELECT COUNT(*) as totalProducts FROM products';
-  
+  const productsCountQuery = "SELECT COUNT(*) as totalProducts FROM products";
+
   // get recent orders
   const recentOrdersQuery = `
   SELECT 
@@ -254,51 +301,51 @@ app.get('/admin/dashboard', (req, res) => {
     CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
     c.email AS customer_email,
     o.total_price,
-    o.order_date
+    o.created_at
   FROM orders o
   JOIN customers c ON o.customer_id = c.id
-  ORDER BY o.order_date DESC
+  ORDER BY o.created_at DESC
   LIMIT 10
   `;
 
   // Execute all queries
   dbConn.query(ordersCountQuery, (err1, ordersResult) => {
     if (err1) {
-      console.error('Error fetching orders count:', err1);
-      return res.status(500).send('Error loading dashboard');
+      console.error("Error fetching orders count:", err1);
+      return res.status(500).send("Error loading dashboard");
     }
 
     dbConn.query(totalSalesQuery, (err2, salesResult) => {
       if (err2) {
-        console.error('Error fetching sales:', err2);
-        return res.status(500).send('Error loading dashboard');
+        console.error("Error fetching sales:", err2);
+        return res.status(500).send("Error loading dashboard");
       }
 
       dbConn.query(customersCountQuery, (err3, customersResult) => {
         if (err3) {
-          console.error('Error fetching customers count:', err3);
-          return res.status(500).send('Error loading dashboard');
+          console.error("Error fetching customers count:", err3);
+          return res.status(500).send("Error loading dashboard");
         }
 
         dbConn.query(productsCountQuery, (err4, productsResult) => {
           if (err4) {
-            console.error('Error fetching products count:', err4);
-            return res.status(500).send('Error loading dashboard');
+            console.error("Error fetching products count:", err4);
+            return res.status(500).send("Error loading dashboard");
           }
 
           dbConn.query(recentOrdersQuery, (err5, recentOrders) => {
             if (err5) {
-              console.error('Error fetching recent orders:', err5);
-              return res.status(500).send('Error loading dashboard');
+              console.error("Error fetching recent orders:", err5);
+              return res.status(500).send("Error loading dashboard");
             }
 
             // Render the dashboard with all data
-            res.render('admin-dashboard.ejs', {
+            res.render("admin-dashboard.ejs", {
               totalOrders: ordersResult[0].totalOrders || 0,
-              totalSales: salesResult[0].totalSales || 0,
+              totalSales: parseFloat(salesResult[0].totalSales) || 0,
               totalCustomers: customersResult[0].totalCustomers || 0,
               totalProducts: productsResult[0].totalProducts || 0,
-              recentOrders: recentOrders
+              recentOrders: recentOrders,
             });
           });
         });
@@ -307,82 +354,93 @@ app.get('/admin/dashboard', (req, res) => {
   });
 });
 
-
-app.get('/admin/products', (req, res) => {
-  const query = 'SELECT * FROM products';
+app.get("/admin/products", (req, res) => {
+  const query = "SELECT * FROM products";
 
   dbConn.query(query, (err, results) => {
     if (err) {
-      console.error('Error fetching products:', err);
-      return res.status(500).send('Error loading products');
+      console.error("Error fetching products:", err);
+      return res.status(500).json({ message: "Error loading products" });
     }
-    res.render('admin-products.ejs', { products: results });
+    res.render("admin-products.ejs", { products: results });
   });
 });
 
-
 // Add new product (Admin)
-app.post('/admin/products', upload.single('image'), (req, res) => {
-  const { name, description, price, category, is_active, requires_advance } = req.body;
-  const imageUrl = req.file ? `/images/${req.file.filename}` : null;
+app.post("/admin/products", upload.single("image"), (req, res) => {
+  const { name, description, price, category_id, is_active, requires_advance } =
+    req.body;
+  const imageUrl = req.file
+    ? `/images/${req.file.filename}`
+    : "/images/default.jpg";
 
   const query = `
     INSERT INTO products 
-    (name, description, price, category, is_active, requires_advance_notice, image_url) 
+    (name, description, price, category_id, is_active, requires_advance_notice, image_url) 
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `;
 
   dbConn.query(
     query,
-    [name, description, price, category, is_active || 1, requires_advance || 0, imageUrl],
+    [
+      name,
+      description,
+      price,
+      category_id,
+      is_active || 1,
+      requires_advance || 0,
+      imageUrl,
+    ],
     (err, result) => {
       if (err) {
-        console.error('Error adding product:', err);
-        return res.status(500).json({ message: 'Error adding product', error: err });
+        console.error("Error adding product:", err);
+        return res
+          .status(500)
+          .json({ message: "Error adding product", error: err });
       }
 
       res.status(200).json({
-        message: 'Product added successfully',
+        message: "Product added successfully",
         productId: result.insertId,
         image_url: imageUrl,
       });
-    }
+    },
   );
 });
 
 // Render Edit Product form
-app.get('/admin/products/:id/edit', (req, res) => {
-    const productId = req.params.id;
+app.get("/admin/products/:id/edit", (req, res) => {
+  const productId = req.params.id;
 
-    const query = 'SELECT * FROM products WHERE id = ?';
-    dbConn.query(query, [productId], (err, results) => {
-        if (err) {
-            console.error('Error fetching product:', err);
-            return res.status(500).send('Database error');
-        }
+  const query = "SELECT * FROM products WHERE id = ?";
+  dbConn.query(query, [productId], (err, results) => {
+    if (err) {
+      console.error("Error fetching product:", err);
+      return res.status(500).json({ message: "Error fetching product" });
+    }
 
-        if (results.length === 0) {
-            return res.status(404).send('Product not found');
-        }
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Product not found" });
+    }
 
-        const product = results[0];
-        res.render('editProduct.ejs', { product });
-    });
+    const product = results[0];
+    res.render("editProduct.ejs", { product });
+  });
 });
 
-
 // Handle Edit Product
-app.post('/admin/products/:id/edit', upload.single('image'), (req, res) => {
+app.post("/admin/products/:id/edit", upload.single("image"), (req, res) => {
   const productId = req.params.id;
-  const { name, description, price, category, requires_advance_notice } = req.body;
+  const { name, description, price, category_id, requires_advance_notice } =
+    req.body;
 
   // Base values for the query
-  let values = [name, description, price, category, requires_advance_notice];
-  let imageQueryPart = '';
+  let values = [name, description, price, category_id, requires_advance_notice];
+  let imageQueryPart = "";
 
   // If a new image is uploaded, include it in the query
   if (req.file) {
-    imageQueryPart = ', image_url = ?';
+    imageQueryPart = ", image_url = ?";
     values.push(`/images/${req.file.filename}`);
   }
 
@@ -392,22 +450,21 @@ app.post('/admin/products/:id/edit', upload.single('image'), (req, res) => {
   // Build the final query
   const query = `
     UPDATE products
-    SET name = ?, description = ?, price = ?, category = ?, requires_advance_notice = ?
+    SET name = ?, description = ?, price = ?, category_id = ?, requires_advance_notice = ?
     ${imageQueryPart}
     WHERE id = ?
   `;
 
   dbConn.query(query, values, (err) => {
     if (err) {
-      console.error('Error updating product:', err);
-      return res.status(500).send("Error updating product");
+      console.error("Error updating product:", err);
+      return res.status(500).json({ message: "Error updating product" });
     }
-    res.redirect('/admin/products');
+    res.redirect("/admin/products");
   });
 });
 
-
-app.post('/admin/products/:id/delete', (req, res) => {
+app.post("/admin/products/:id/delete", (req, res) => {
   const productId = req.params.id;
 
   const sql = "DELETE FROM products WHERE id = ?";
@@ -418,17 +475,15 @@ app.post('/admin/products/:id/delete', (req, res) => {
       return res.status(500).send("Error deleting product");
     }
 
-    res.redirect('/admin/products');
+    res.redirect("/admin/products");
   });
 });
 
+app.get("/admin/orders/:id", (req, res) => {
+  const orderId = req.params.id;
+  const updated = req.query.updated === "true";
 
-
-app.get('/admin/orders/:id', (req, res) => {
-    const orderId = req.params.id;
-    const updated = req.query.updated === "true";
-
-    const orderQuery = `
+  const orderQuery = `
       SELECT orders.*,
       CONCAT(customers.first_name, ' ', customers.last_name) AS customer_name,
       customers.email AS customer_email,
@@ -438,65 +493,62 @@ app.get('/admin/orders/:id', (req, res) => {
       WHERE orders.id = ?
     `;
 
-    const itemsQuery = `
+  const itemsQuery = `
       SELECT 
         order_items.quantity,
         order_items.unit_price AS price,
-        order_items.total AS subtotal,
+        order_items.line_total AS subtotal,
         products.name AS product_name
       FROM order_items
       JOIN products ON order_items.product_id = products.id
       WHERE order_items.order_id = ?
     `;
 
-    dbConn.query(orderQuery, [orderId], (err, orderResult) => {
-        if (err) throw err;
+  dbConn.query(orderQuery, [orderId], (err, orderResult) => {
+    if (err) throw err;
 
-        if (orderResult.length === 0) {
-            return res.render("orderDetails.ejs", {
-                order: null,
-                items: [],
-                error: "Order not found",
-                updated: false
-            });
-        }
+    if (orderResult.length === 0) {
+      return res.render("orderDetails.ejs", {
+        order: null,
+        items: [],
+        error: "Order not found",
+        updated: false,
+      });
+    }
 
-        const orderData = orderResult[0];
+    const orderData = orderResult[0];
 
-        dbConn.query(itemsQuery, [orderId], (err, itemsResult) => {
-            if (err) throw err;
+    dbConn.query(itemsQuery, [orderId], (err, itemsResult) => {
+      if (err) throw err;
 
-            res.render("orderDetails.ejs", {
-                order: orderData,
-                items: itemsResult,
-                error: null,
-                updated: updated
-            });
-        });
+      res.render("orderDetails.ejs", {
+        order: orderData,
+        items: itemsResult,
+        error: null,
+        updated: updated,
+      });
     });
+  });
 });
 
+app.post("/admin/orders/:id/status", (req, res) => {
+  const orderId = req.params.id;
+  const newStatus = req.body.status;
 
-app.post('/admin/orders/:id/status', (req, res) => {
-    const orderId = req.params.id;
-    const newStatus = req.body.status;
-
-    const sql = "UPDATE orders SET status = ? WHERE id = ?";
-    dbConn.query(sql, [newStatus, orderId], (err) => {
-        if (err) throw err;
-        res.redirect(`/admin/orders/${orderId}?updated=true`);
-    });
+  const sql = "UPDATE orders SET status = ? WHERE id = ?";
+  dbConn.query(sql, [newStatus, orderId], (err) => {
+    if (err) throw err;
+    res.redirect(`/admin/orders/${orderId}?updated=true`);
+  });
 });
-
-
 
 // about
-app.get('/about', (req, res) => {
-    res.render('about.ejs');
-}); 
+app.get("/about", (req, res) => {
+  res.render("about.ejs");
+});
 
 // products
-app.get('/products', (req, res) => {
+app.get("/products", (req, res) => {
   const sql = "SELECT * FROM products";
 
   dbConn.query(sql, (err, results) => {
@@ -504,10 +556,9 @@ app.get('/products', (req, res) => {
       console.error("Error fetching products:", err);
       return res.status(500).send("Error fetching products from database");
     }
-    res.render('products.ejs', { products: results });
+    res.render("products.ejs", { products: results });
   });
 });
-
 
 app.get("/logout", (req, res) => {
   req.session.destroy((err) => {
@@ -520,13 +571,13 @@ app.get("/logout", (req, res) => {
   });
 });
 
-// 1. Export the app (This is what Vercel looks for)
+// 1. Export the app
 module.exports = app;
 
 // 2. Only run app.listen if we are NOT on Vercel
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
-        console.log(`Server is running on http://localhost:${PORT}`);
-    });
+if (process.env.NODE_ENV !== "production") {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+  });
 }
