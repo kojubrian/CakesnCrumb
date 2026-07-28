@@ -5,18 +5,23 @@ const path = require("path");
 const multer = require("multer");
 const mysql = require("mysql2");
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: (req, file, cb) => {
     cb(null, path.join(__dirname, "public/images"));
   },
-  filename: function (req, file, cb) {
-    // Generates a unique filename
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname),
-    );
+  filename: (req, file, cb) => {
+    // Generates product name from the form
+    const productName = req.body.name
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-") //replace spaces with hyphens
+      .replace(/[^a-z0-9-]/g, ""); //remove special characters
+
+    const extension = path.extname(file.originalname);
+    // Append timestamp to ensure unique filenames
+    cb(null, `${productName}-${Date.now()}${extension}`);
   },
 });
+
 const upload = multer({ storage: storage });
 
 const app = express();
